@@ -57,17 +57,6 @@ async fn main() -> Result<()> {
         ("Updating Composer packages", vec!["composer global update"]),
         ("Installing system updates", vec!["softwareupdate -ia"]),
         ("Updating Rust tools", vec!["cargo install-update -a"]),
-        (
-            "Checking pip upgrades",
-            vec![
-                "pip3 list --outdated",
-                "pip3 install --upgrade $(pip3 list --outdated | awk 'NR>2 {print $1}')",
-            ],
-        ),
-        (
-            "Updating Ruby gems",
-            vec!["gem update --system", "gem update"],
-        ),
         ("Updating oh-my-zsh", vec!["zsh -ic 'omz update'"]),
     ];
 
@@ -78,9 +67,12 @@ async fn main() -> Result<()> {
             continue;
         }
 
-        // Spinner for current step with improved styling
+        // Spinner for current step
         let pb = multi.add(ProgressBar::new_spinner());
-        pb.set_message(format!("{}...", desc));
+
+        // —–––––––– Change here: show the step description in plain white –––––––––—
+        pb.set_message(format!("{}", style(format!("{}...", desc)).white()));
+
         pb.enable_steady_tick(Duration::from_millis(80));
         pb.set_style(
             ProgressStyle::with_template("{spinner:.green.bold} {msg} {elapsed_precise}")
@@ -90,15 +82,16 @@ async fn main() -> Result<()> {
         info!("Starting: {}", desc);
 
         for cmd in cmds {
-            // Print the command being executed
-            pb.println(style(&format!("$ {}", cmd)).bold().to_string());
+            // —–––––––– commands in white too –––––––––—
+            pb.println(style(format!("$ {}", cmd)).white().to_string());
             if let Err(e) = run_command_with_output(cmd, &pb).await {
-                pb.println(style(&format!("⚠️ Error: {}", e)).red().to_string());
+                pb.println(style(format!("⚠️ Error: {}", e)).red().to_string());
                 error!("Command `{}` failed: {:?}", cmd, e);
             }
         }
 
-        pb.finish_with_message(format!("✅ Done: {}", desc));
+        // —–––––––– finish message in white –––––––––—
+        pb.finish_with_message(style(format!("✅ Done: {}", desc)).white().to_string());
         info!("Finished: {}", desc);
         sleep(Duration::from_millis(300)).await;
     }
@@ -123,7 +116,7 @@ async fn run_command_with_output(cmd: &str, pb: &ProgressBar) -> Result<()> {
     let bin = parts.next().context("Empty command")?;
     if which(bin).is_err() {
         pb.println(
-            style(&format!("{} not found, skipping.", bin))
+            style(format!("{} not found, skipping.", bin))
                 .yellow()
                 .to_string(),
         );
@@ -141,6 +134,7 @@ async fn run_command_with_output(cmd: &str, pb: &ProgressBar) -> Result<()> {
     if let Some(stdout) = child.stdout.take() {
         let mut reader = BufReader::new(stdout).lines();
         while let Some(line) = reader.next_line().await.context("Reading stdout failed")? {
+            // plain default (white) for stdout lines
             pb.println(line);
         }
     }
@@ -148,7 +142,7 @@ async fn run_command_with_output(cmd: &str, pb: &ProgressBar) -> Result<()> {
     if let Some(stderr) = child.stderr.take() {
         let mut reader = BufReader::new(stderr).lines();
         while let Some(line) = reader.next_line().await.context("Reading stderr failed")? {
-            pb.println(style(&line).red().to_string());
+            pb.println(style(&line).to_string());
         }
     }
 
