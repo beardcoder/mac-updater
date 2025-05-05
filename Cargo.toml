@@ -15,7 +15,6 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 console = "0.15"
 indicatif = "0.17"
-spinners = "4"
 notify-rust = "4.5"
 which = "7"
 dialoguer = "0.11"
