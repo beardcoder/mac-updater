@@ -81,11 +81,17 @@ async fn main() -> Result<()> {
         );
         info!("Starting: {}", desc);
 
-        for cmd in cmds {
-            // —–––––––– commands in white too –––––––––—
-            pb.println(style(format!("$ {}", cmd)).white().to_string());
+        for (i, cmd) in cmds.iter().enumerate() {
+            // Display the current command with better styling
+            pb.println(
+                style(format!("▶️ [{} of {}] Running: {}", i + 1, cmds.len(), cmd))
+                    .cyan()
+                    .bold()
+                    .to_string(),
+            );
+
             if let Err(e) = run_command_with_output(cmd, &pb).await {
-                pb.println(style(format!("⚠️ Error: {}", e)).red().to_string());
+                pb.println(style(format!("⚠️ Error: {}", e)).red().bold().to_string());
                 error!("Command `{}` failed: {:?}", cmd, e);
             }
         }
@@ -130,20 +136,32 @@ async fn run_command_with_output(cmd: &str, pb: &ProgressBar) -> Result<()> {
         .spawn()
         .context("Failed to spawn process")?;
 
-    // Capture stdout
+    // Capture both stdout and stderr
+    let mut tasks = vec![];
+
     if let Some(stdout) = child.stdout.take() {
-        let mut reader = BufReader::new(stdout).lines();
-        while let Some(line) = reader.next_line().await.context("Reading stdout failed")? {
-            // plain default (white) for stdout lines
-            pb.println(line);
-        }
+        let pb_clone = pb.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut reader = BufReader::new(stdout).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                pb_clone.println(line);
+            }
+        }));
     }
-    // Capture stderr
+
     if let Some(stderr) = child.stderr.take() {
-        let mut reader = BufReader::new(stderr).lines();
-        while let Some(line) = reader.next_line().await.context("Reading stderr failed")? {
-            pb.println(style(&line).to_string());
-        }
+        let pb_clone = pb.clone();
+        tasks.push(tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                pb_clone.println(line);
+            }
+        }));
+    }
+
+    // Wait for all tasks to complete
+    for task in tasks {
+        let _ = task.await;
     }
 
     let status = child.wait().await.context("Process execution failed")?;
