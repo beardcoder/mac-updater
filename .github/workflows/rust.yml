@@ -9,33 +9,34 @@ permissions:
   contents: write
 
 jobs:
-  build-macos:
+  build-and-release:
+    name: Build and Upload macOS Binary
     runs-on: macos-latest
+
     steps:
-      - name: Checkout code
+      - name: 📥 Checkout repository
         uses: actions/checkout@v4
 
-      - name: Install Rust toolchain
+      - name: 🦀 Set up Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
-      - name: Cache cargo build
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-
-      - name: Build release binary
+      - name: 🧱 Build release binary
         run: cargo build --release
 
-      - name: Strip debug symbols (optional, für kleinere Größe)
+      - name: 🧽 Strip debug symbols
         run: strip target/release/mac-updater || true
 
-      - name: Create GitHub Release
+      - name: 📦 Prepare binary artifact
+        run: |
+          mkdir -p dist
+          cp target/release/mac-updater dist/mac-updater
+          cd dist
+          zip mac-updater.zip mac-updater
+
+      - name: 🚀 Create GitHub release and upload binary
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/mac-updater
+          files: |
+            dist/mac-updater.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
