@@ -70,19 +70,20 @@ async fn main() -> Result<()> {
         // Spinner for current step
         let pb = multi.add(ProgressBar::new_spinner());
 
-        // —–––––––– Change here: show the step description in plain white –––––––––—
         pb.set_message(format!("{}", style(format!("{}...", desc)).white()));
 
         pb.enable_steady_tick(Duration::from_millis(80));
         pb.set_style(
-            ProgressStyle::with_template("{spinner:.green.bold} {msg} {elapsed_precise}")
+            ProgressStyle::with_template("{spinner:.green.bold} {msg}")
                 .unwrap()
-                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧"]),
+                .tick_strings(&[
+                    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",  // spinner frames
+                    "✅", // ← shown when finished
+                ]),
         );
         info!("Starting: {}", desc);
 
         for (i, cmd) in cmds.iter().enumerate() {
-            // Display the current command with better styling
             pb.println(
                 style(format!("▶️ [{} of {}] Running: {}", i + 1, cmds.len(), cmd))
                     .cyan()
@@ -96,8 +97,12 @@ async fn main() -> Result<()> {
             }
         }
 
-        // —–––––––– finish message in white –––––––––—
-        pb.finish_with_message(style(format!("✅ Done: {}", desc)).white().to_string());
+        pb.finish_with_message(
+            style(format!("✅ Done: {}", desc))
+                .green()
+                .bold()
+                .to_string(),
+        );
         info!("Finished: {}", desc);
         sleep(Duration::from_millis(300)).await;
     }
