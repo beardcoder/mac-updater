@@ -97,12 +97,7 @@ async fn main() -> Result<()> {
             }
         }
 
-        pb.finish_with_message(
-            style(format!("✅ Done: {}", desc))
-                .green()
-                .bold()
-                .to_string(),
-        );
+        pb.finish_with_message(style(format!("Done: {}", desc)).green().bold().to_string());
         info!("Finished: {}", desc);
         sleep(Duration::from_millis(300)).await;
     }
