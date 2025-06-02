@@ -24,9 +24,9 @@ use which::which;
     about = "Your sleek system update assistant 🧼💻"
 )]
 struct Args {
-    /// Run in non-interactive mode (skip confirmations)
-    #[arg(short, long)]
-    yes: bool,
+    /// Run in interactive mode (ask for confirmations)
+    #[arg(short = 'i', long = "interactive")]
+    interactive: bool,
 }
 
 #[tokio::main]
@@ -61,7 +61,7 @@ async fn main() -> Result<()> {
     ];
 
     for (desc, cmds) in steps {
-        if !args.yes && !confirm(desc)? {
+        if args.interactive && !confirm(desc)? {
             println!("⏭️ {}", style("Skipped.").yellow());
             info!("Skipped: {}", desc);
             continue;
