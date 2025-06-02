@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 use clap::Parser;
 use console::style;
 use dialoguer::Confirm;
@@ -16,6 +17,102 @@ use tracing_appender::non_blocking;
 use tracing_appender::rolling;
 use tracing_subscriber::EnvFilter;
 use which::which;
+
+// Trait for update steps
+#[async_trait]
+trait UpdaterStep {
+    fn description(&self) -> &str;
+    async fn run(&self, pb: &ProgressBar) -> Result<()>;
+}
+
+// Concrete step executing shell commands
+struct CommandStep {
+    description: String,
+    cmds: Vec<String>,
+}
+
+impl CommandStep {
+    fn new<S: Into<String>>(description: S, cmds: Vec<S>) -> Self {
+        Self {
+            description: description.into(),
+            cmds: cmds.into_iter().map(Into::into).collect(),
+        }
+    }
+}
+
+#[async_trait]
+impl UpdaterStep for CommandStep {
+    fn description(&self) -> &str {
+        &self.description
+    }
+
+    async fn run(&self, pb: &ProgressBar) -> Result<()> {
+        for (i, cmd) in self.cmds.iter().enumerate() {
+            pb.println(
+                style(format!(
+                    "▶️ [{} of {}] Running: {}",
+                    i + 1,
+                    self.cmds.len(),
+                    cmd
+                ))
+                .cyan()
+                .bold()
+                .to_string(),
+            );
+
+            if let Err(e) = run_command_with_output(cmd, pb).await {
+                pb.println(style(format!("⚠️ Error: {}", e)).red().bold().to_string());
+                error!("Command `{}` failed: {:?}", cmd, e);
+            }
+        }
+        Ok(())
+    }
+}
+
+// Orchestrator for update steps
+struct Updater {
+    interactive: bool,
+    steps: Vec<Box<dyn UpdaterStep + Send + Sync>>,
+    multi: MultiProgress,
+}
+
+impl Updater {
+    fn new(interactive: bool, steps: Vec<Box<dyn UpdaterStep + Send + Sync>>) -> Self {
+        Updater {
+            interactive,
+            steps,
+            multi: MultiProgress::new(),
+        }
+    }
+
+    async fn run(self) -> Result<()> {
+        for step in self.steps {
+            let desc = step.description();
+            if self.interactive && !confirm(desc)? {
+                println!("⏭️ {}", style("Skipped.").yellow());
+                info!("Skipped: {}", desc);
+                continue;
+            }
+
+            let pb = self.multi.add(ProgressBar::new_spinner());
+            pb.set_message(style(format!("{}...", desc)).white().to_string());
+            pb.enable_steady_tick(Duration::from_millis(80));
+            pb.set_style(
+                ProgressStyle::with_template("{spinner:.green.bold} {msg}")
+                    .unwrap()
+                    .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "✅"]),
+            );
+            info!("Starting: {}", desc);
+
+            step.run(&pb).await?;
+
+            pb.finish_with_message(style(format!("Done: {}", desc)).green().bold().to_string());
+            info!("Finished: {}", desc);
+            sleep(Duration::from_millis(300)).await;
+        }
+        Ok(())
+    }
+}
 
 #[derive(Parser)]
 #[command(
@@ -46,61 +143,40 @@ async fn main() -> Result<()> {
             .bold()
     );
 
-    let multi = MultiProgress::new();
-    let steps = vec![
-        (
+    // Build steps
+    let steps: Vec<Box<dyn UpdaterStep + Send + Sync>> = vec![
+        Box::new(CommandStep::new(
             "Updating Homebrew",
             vec!["brew update", "brew upgrade", "brew cleanup"],
-        ),
-        ("Upgrading App Store apps", vec!["mas upgrade"]),
-        ("Updating npm packages", vec!["npm update -g"]),
-        ("Updating Composer packages", vec!["composer global update"]),
-        ("Installing system updates", vec!["softwareupdate -ia"]),
-        ("Updating Rust tools", vec!["cargo install-update -a"]),
-        ("Updating oh-my-zsh", vec!["zsh -ic 'omz update'"]),
+        )),
+        Box::new(CommandStep::new(
+            "Upgrading App Store apps",
+            vec!["mas upgrade"],
+        )),
+        Box::new(CommandStep::new(
+            "Updating npm packages",
+            vec!["npm update -g"],
+        )),
+        Box::new(CommandStep::new(
+            "Updating Composer packages",
+            vec!["composer global update"],
+        )),
+        Box::new(CommandStep::new(
+            "Installing system updates",
+            vec!["softwareupdate -ia"],
+        )),
+        Box::new(CommandStep::new(
+            "Updating Rust tools",
+            vec!["cargo install-update -a"],
+        )),
+        Box::new(CommandStep::new(
+            "Updating oh-my-zsh",
+            vec!["zsh -ic 'omz update'"],
+        )),
     ];
 
-    for (desc, cmds) in steps {
-        if args.interactive && !confirm(desc)? {
-            println!("⏭️ {}", style("Skipped.").yellow());
-            info!("Skipped: {}", desc);
-            continue;
-        }
-
-        // Spinner for current step
-        let pb = multi.add(ProgressBar::new_spinner());
-
-        pb.set_message(format!("{}", style(format!("{}...", desc)).white()));
-
-        pb.enable_steady_tick(Duration::from_millis(80));
-        pb.set_style(
-            ProgressStyle::with_template("{spinner:.green.bold} {msg}")
-                .unwrap()
-                .tick_strings(&[
-                    "⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧",  // spinner frames
-                    "✅", // ← shown when finished
-                ]),
-        );
-        info!("Starting: {}", desc);
-
-        for (i, cmd) in cmds.iter().enumerate() {
-            pb.println(
-                style(format!("▶️ [{} of {}] Running: {}", i + 1, cmds.len(), cmd))
-                    .cyan()
-                    .bold()
-                    .to_string(),
-            );
-
-            if let Err(e) = run_command_with_output(cmd, &pb).await {
-                pb.println(style(format!("⚠️ Error: {}", e)).red().bold().to_string());
-                error!("Command `{}` failed: {:?}", cmd, e);
-            }
-        }
-
-        pb.finish_with_message(style(format!("Done: {}", desc)).green().bold().to_string());
-        info!("Finished: {}", desc);
-        sleep(Duration::from_millis(300)).await;
-    }
+    // Run updater
+    Updater::new(args.interactive, steps).run().await?;
 
     println!(
         "{}",
