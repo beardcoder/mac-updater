@@ -5,6 +5,7 @@ use console::style;
 use dialoguer::Confirm;
 use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
 use notify_rust::Notification;
+use std::env;
 use std::fs;
 use std::io::{self, Write};
 use std::path::PathBuf;
@@ -171,7 +172,10 @@ async fn main() -> Result<()> {
         )),
         Box::new(CommandStep::new(
             "Updating oh-my-zsh",
-            vec!["zsh -ic 'omz update'"],
+            vec![&format!(
+                "{}/.oh-my-zsh/tools/upgrade.sh",
+                env::home_dir().unwrap().display()
+            )],
         )),
     ];
 
