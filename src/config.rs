@@ -70,32 +70,33 @@ impl Default for Config {
 impl Config {
     pub fn load() -> anyhow::Result<Self> {
         let config_path = Self::config_path()?;
-        
+
         if !config_path.exists() {
             let default_config = Self::default();
             default_config.save()?;
             return Ok(default_config);
         }
-        
+
         let content = std::fs::read_to_string(&config_path)?;
         let config: Config = serde_json::from_str(&content)?;
         Ok(config)
     }
-    
+
     pub fn save(&self) -> anyhow::Result<()> {
         let config_path = Self::config_path()?;
-        
+
         if let Some(parent) = config_path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        
+
         let content = serde_json::to_string_pretty(self)?;
         std::fs::write(&config_path, content)?;
         Ok(())
     }
-    
+
     fn config_path() -> anyhow::Result<PathBuf> {
-        let home = dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
+        let home =
+            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
         Ok(home.join(".config/mac-updater/config.json"))
     }
 }
