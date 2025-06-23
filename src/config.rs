@@ -1,5 +1,5 @@
+use config::{Config as ConfigLoader, ConfigError, Environment, File};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Config {
@@ -36,21 +36,11 @@ impl Default for Config {
     fn default() -> Self {
         Self {
             skip_steps: vec![],
-            custom_commands: vec![
-                CustomCommand {
-                    name: "Update Homebrew Casks".to_string(),
-                    commands: vec!["brew upgrade --cask".to_string()],
-                    enabled: true,
-                },
-                CustomCommand {
-                    name: "Clean iOS Simulator".to_string(),
-                    commands: vec![
-                        "xcrun simctl erase all".to_string(),
-                        "xcrun simctl delete unavailable".to_string(),
-                    ],
-                    enabled: false,
-                },
-            ],
+            custom_commands: vec![CustomCommand {
+                name: "Update Homebrew Casks".to_string(),
+                commands: vec!["brew upgrade --cask".to_string()],
+                enabled: false,
+            }],
             cleanup_settings: CleanupSettings {
                 downloads_days_old: 30,
                 screenshots_days_old: 14,
@@ -68,35 +58,16 @@ impl Default for Config {
 }
 
 impl Config {
-    pub fn load() -> anyhow::Result<Self> {
-        let config_path = Self::config_path()?;
+    pub fn load() -> Result<Self, ConfigError> {
+        let settings = ConfigLoader::builder()
+            .add_source(File::with_name(".config/mac-updater/config").required(false))
+            .add_source(Environment::with_prefix("MAC_UPDATER"))
+            .build()?;
 
-        if !config_path.exists() {
-            let default_config = Self::default();
-            default_config.save()?;
-            return Ok(default_config);
+        // If no configuration file exists, return the default configuration
+        match settings.try_deserialize::<Config>() {
+            Ok(config) => Ok(config),
+            Err(_) => Ok(Config::default()),
         }
-
-        let content = std::fs::read_to_string(&config_path)?;
-        let config: Config = serde_json::from_str(&content)?;
-        Ok(config)
-    }
-
-    pub fn save(&self) -> anyhow::Result<()> {
-        let config_path = Self::config_path()?;
-
-        if let Some(parent) = config_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-
-        let content = serde_json::to_string_pretty(self)?;
-        std::fs::write(&config_path, content)?;
-        Ok(())
-    }
-
-    fn config_path() -> anyhow::Result<PathBuf> {
-        let home =
-            dirs::home_dir().ok_or_else(|| anyhow::anyhow!("Could not find home directory"))?;
-        Ok(home.join(".config/mac-updater/config.json"))
     }
 }

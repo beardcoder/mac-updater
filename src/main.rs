@@ -10,18 +10,15 @@ use tokio::time::{sleep, Duration};
 use tracing::{error, info};
 
 mod config;
-mod logging;
+mod logger;
 mod notification;
 mod steps;
 mod user_input;
 
 use config::Config;
-use logging::setup_logger;
 use notification::send_notification;
 use steps::{CommandStep, UpdaterStep};
 use user_input::confirm;
-
-// Orchestrator for update steps
 struct Updater {
     interactive: bool,
     quiet: bool,
@@ -101,7 +98,6 @@ impl Updater {
             }
 
             if self.quiet {
-                // In quiet mode, just show a simple progress indicator
                 print!("\r🔧 [{}/{}] {}...", step_num, total_steps, desc);
                 io::stdout().flush().ok();
             } else {
@@ -147,7 +143,6 @@ impl Updater {
             }
 
             if self.quiet {
-                // For quiet mode, run without progress bar
                 if let Err(_e) = step.run(&ProgressBar::hidden()).await {
                     print!(" ❌");
                     self.stats.failed_steps += 1;
@@ -159,11 +154,8 @@ impl Updater {
             }
         }
 
-        if self.quiet {
-            println!(); // New line after progress indicators
-        }
+        if self.quiet {}
 
-        // Final statistics
         info!("Update completed: {:?}", self.stats);
 
         let duration = self.stats.duration();
@@ -213,34 +205,55 @@ impl Updater {
     about = "Your sleek system update assistant 🧼💻"
 )]
 struct Args {
-    /// Run in interactive mode (ask for confirmations)
     #[arg(short = 'i', long = "interactive")]
     interactive: bool,
-    /// Reduce output verbosity (show only essential information)
     #[arg(short = 'q', long = "quiet")]
     quiet: bool,
 }
-
-// Füge run_command_with_output als pub async fn hinzu, damit es im Closure verwendet werden kann
 pub async fn run_command_with_output(cmd: String, pb: ProgressBar) -> anyhow::Result<()> {
-    let mut parts = cmd.split_whitespace();
-    let bin = parts.next().context("Empty command")?;
-    let output = tokio::process::Command::new(bin)
-        .args(parts)
+    // Use shell to execute complex commands with pipes, redirections, etc.
+    let output = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(&cmd)
         .output()
         .await
         .map_err(anyhow::Error::from)?;
 
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    // Log stdout wenn vorhanden
+    if !stdout.trim().is_empty() {
+        info!("Command `{}` stdout: {}", cmd, stdout.trim());
+    }
+
+    // Log stderr wenn vorhanden
+    if !stderr.trim().is_empty() {
+        info!("Command `{}` stderr: {}", cmd, stderr.trim());
+    }
+
     if !output.status.success() {
         pb.println(
-            style(format!("❌ Command `{}` failed", cmd))
-                .red()
-                .to_string(),
+            style(format!(
+                "❌ Command `{}` failed with exit code {}. Error: {}",
+                cmd,
+                output.status.code().unwrap_or(-1),
+                stderr.trim()
+            ))
+            .red()
+            .to_string(),
+        );
+        error!(
+            "Command `{}` failed with exit code {}. Error: {}",
+            cmd,
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
         );
         return Err(anyhow::anyhow!(
-            "Command `{}` failed with exit code {}",
+            "Command `{}` failed with exit code {}. Error: {}",
             cmd,
-            output.status.code().unwrap_or(-1)
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
         ));
     }
     pb.println(
@@ -248,18 +261,19 @@ pub async fn run_command_with_output(cmd: String, pb: ProgressBar) -> anyhow::Re
             .green()
             .to_string(),
     );
+    info!("Command `{}` completed successfully", cmd);
     Ok(())
 }
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    setup_logger()?;
+    // Initialize the logger
+    logger::init_logger();
+
     let args = Args::parse();
 
-    // Load configuration
     let config = Config::load().context("Failed to load configuration")?;
 
-    // Clear terminal screen
     print!("\x1B[2J\x1B[1;1H");
     io::stdout().flush().ok();
 
@@ -271,12 +285,10 @@ async fn main() -> Result<()> {
             .bold()
     );
 
-    // Build steps
     let run_command = |cmd: String, pb: ProgressBar| {
         Box::pin(run_command_with_output(cmd, pb))
             as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
     };
-    // Gruppierung der Steps
     let update_steps: Vec<Box<dyn UpdaterStep + Send + Sync>> = vec![
         Box::new(CommandStep::new(
             "Updating Homebrew",
@@ -290,7 +302,9 @@ async fn main() -> Result<()> {
         )),
         Box::new(CommandStep::new(
             "Updating npm packages",
-            vec!["npm update -g"],
+            vec![
+                "npm outdated -g --parseable --depth=0 | cut -d: -f4 | xargs -I {} npm install -g {}",
+            ],
             run_command,
         )),
         Box::new(CommandStep::new(
@@ -304,13 +318,8 @@ async fn main() -> Result<()> {
             run_command,
         )),
         Box::new(CommandStep::new(
-            "Updating Rust tools",
-            vec!["cargo install-update -a"],
-            run_command,
-        )),
-        Box::new(CommandStep::new(
             "Updating Ruby gems",
-            vec!["gem update", "gem cleanup"],
+            vec!["gem update --user-install", "gem cleanup"],
             run_command,
         )),
         Box::new(CommandStep::new(
@@ -349,7 +358,6 @@ async fn main() -> Result<()> {
             vec![
                 "sudo tmutil thinlocalsnapshots / 10000000000 4 2>/dev/null || true",
                 "sudo purge",
-                "sudo periodic daily weekly monthly",
             ],
             run_command,
         )),
@@ -358,7 +366,7 @@ async fn main() -> Result<()> {
             vec![
                 "rm -rf ~/Library/Developer/Xcode/DerivedData 2>/dev/null || true",
                 "rm -rf ~/Library/Developer/Xcode/Archives 2>/dev/null || true",
-                "xcrun simctl delete unavailable",
+                "command -v xcrun >/dev/null 2>&1 && xcrun simctl delete unavailable 2>/dev/null || true",
             ],
             run_command,
         )),
@@ -396,20 +404,20 @@ async fn main() -> Result<()> {
         )),
     ];
 
-    // Steps zusammenführen und Gruppenüberschriften ausgeben
     println!(
         "\n{}",
-        style("== Paket- und System-Updates ==").cyan().bold()
+        style("== Package and System Updates ==").cyan().bold()
     );
     let mut steps: Vec<Box<dyn UpdaterStep + Send + Sync>> = vec![];
     steps.extend(update_steps);
     println!(
         "\n{}",
-        style("== Systemwartung und Optimierung ==").cyan().bold()
+        style("== System Maintenance and Optimization ==")
+            .cyan()
+            .bold()
     );
     steps.extend(maintenance_steps);
 
-    // Run updater
     Updater::new(args.interactive, args.quiet, steps, config.clone())
         .run()
         .await?;

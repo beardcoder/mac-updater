@@ -3,7 +3,7 @@ use anyhow::Result;
 use async_trait::async_trait;
 use console::style;
 use indicatif::ProgressBar;
-use tracing::error;
+use log::{error, info};
 
 #[async_trait]
 pub trait UpdaterStep {
@@ -12,9 +12,9 @@ pub trait UpdaterStep {
 }
 
 pub struct CommandStep {
-    description: String,
-    cmds: Vec<String>,
-    run_command: Box<
+    pub description: String,
+    pub cmds: Vec<String>,
+    pub run_command: Box<
         dyn Fn(
                 String,
                 ProgressBar,
@@ -53,6 +53,11 @@ impl UpdaterStep for CommandStep {
 
     async fn run(&self, pb: &ProgressBar) -> Result<()> {
         let total_cmds = self.cmds.len();
+        info!(
+            "Starting step: {} ({} commands)",
+            self.description, total_cmds
+        );
+
         for (i, cmd) in self.cmds.iter().enumerate() {
             if total_cmds > 1 {
                 pb.set_message(
@@ -66,15 +71,30 @@ impl UpdaterStep for CommandStep {
                     .to_string(),
                 );
             }
-            if let Err(e) = (self.run_command)(cmd.clone(), pb.clone()).await {
-                pb.println(
-                    style(format!("⚠️ Command failed: {} - {}", cmd, e))
-                        .red()
-                        .to_string(),
-                );
-                error!("Command `{}` failed: {:?}", cmd, e);
+
+            info!("Executing command {}/{}: {}", i + 1, total_cmds, cmd);
+
+            match (self.run_command)(cmd.clone(), pb.clone()).await {
+                Ok(_) => {
+                    pb.println(
+                        style(format!("✅ Command succeeded: {}", cmd))
+                            .green()
+                            .to_string(),
+                    );
+                    info!("Command succeeded: {}", cmd);
+                }
+                Err(e) => {
+                    pb.println(
+                        style(format!("⚠️ Command failed: {} - {}", cmd, e))
+                            .red()
+                            .to_string(),
+                    );
+                    error!("Command `{}` failed: {:?}", cmd, e);
+                }
             }
         }
+
+        info!("Completed step: {}", self.description);
         Ok(())
     }
 }

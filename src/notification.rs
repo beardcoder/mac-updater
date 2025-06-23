@@ -1,4 +1,3 @@
-//! Benachrichtigungsmodul für mac-updater
 use anyhow::Result;
 use notify_rust::Notification;
 

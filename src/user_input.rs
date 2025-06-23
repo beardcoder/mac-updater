@@ -1,4 +1,3 @@
-//! Modul für Benutzereingaben (z.B. Bestätigungsdialoge)
 use anyhow::Result;
 use dialoguer::Confirm;
 
