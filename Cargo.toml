@@ -1,6 +1,6 @@
 [package]
 name = "mac-updater"
-version = "0.2.0"
+version = "0.5.1"
 edition = "2021"
 authors = ["Markus Sommer <markus@letsbenow.de>"]
 description = "🧼 A sleek macOS maintenance & update assistant"
