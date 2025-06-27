@@ -338,9 +338,6 @@ async fn main() -> Result<()> {
             vec![
                 "sudo dscacheutil -flushcache",
                 "sudo killall -HUP mDNSResponder",
-                "rm -rf ~/Library/Caches/com.apple.Safari/WebKitCache 2>/dev/null || true",
-                "rm -rf ~/Library/Caches/Google/Chrome/Default/Cache 2>/dev/null || true",
-                "rm -rf ~/Library/Caches/Firefox/Profiles/*/cache2 2>/dev/null || true",
             ],
             run_command,
         )),
@@ -362,29 +359,12 @@ async fn main() -> Result<()> {
             run_command,
         )),
         Box::new(CommandStep::new(
-            "Optimizing Xcode",
-            vec![
-                "rm -rf ~/Library/Developer/Xcode/DerivedData 2>/dev/null || true",
-                "rm -rf ~/Library/Developer/Xcode/Archives 2>/dev/null || true",
-                "command -v xcrun >/dev/null 2>&1 && xcrun simctl delete unavailable 2>/dev/null || true",
-            ],
-            run_command,
-        )),
-        Box::new(CommandStep::new(
             "Clearing logs and temp files",
             vec![
                 "sudo rm -rf /private/var/log/asl/*.asl 2>/dev/null || true",
                 "sudo rm -rf /Library/Logs/DiagnosticReports/* 2>/dev/null || true",
                 "sudo rm -rf /var/folders/*/*/*/C/* 2>/dev/null || true",
                 "rm -rf ~/Library/Application\\ Support/CrashReporter/* 2>/dev/null || true",
-            ],
-            run_command,
-        )),
-        Box::new(CommandStep::new(
-            "Rebuilding Launch Services",
-            vec![
-                "/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -kill -r -domain local -domain system -domain user 2>/dev/null || true",
-                "killall Finder 2>/dev/null || true",
             ],
             run_command,
         )),
