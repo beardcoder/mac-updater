@@ -17,7 +17,7 @@ mod user_input;
 
 use config::Config;
 use notification::send_notification;
-use steps::{CommandStep, UpdaterStep};
+use steps::{CommandStep, UpdaterStep, UpdatedApp};
 use user_input::confirm;
 struct Updater {
     interactive: bool,
@@ -27,6 +27,7 @@ struct Updater {
     #[allow(dead_code)]
     config: Config,
     stats: UpdateStats,
+    updated_apps: Vec<UpdatedApp>,
 }
 
 #[derive(Debug, Clone)]
@@ -69,6 +70,7 @@ impl Updater {
             multi: MultiProgress::new(),
             config,
             stats: UpdateStats::new(total_steps),
+            updated_apps: Vec::new(),
         }
     }
 
@@ -100,6 +102,19 @@ impl Updater {
             if self.quiet {
                 print!("\r🔧 [{}/{}] {}...", step_num, total_steps, desc);
                 io::stdout().flush().ok();
+                
+                match step.run(&ProgressBar::hidden()).await {
+                    Ok(step_result) => {
+                        print!(" ✅");
+                        self.stats.completed_steps += 1;
+                        self.updated_apps.extend(step_result.updated_apps);
+                    }
+                    Err(_e) => {
+                        print!(" ❌");
+                        self.stats.failed_steps += 1;
+                    }
+                }
+                io::stdout().flush().ok();
             } else {
                 let pb = self.multi.add(ProgressBar::new_spinner());
                 pb.set_message(
@@ -116,45 +131,37 @@ impl Updater {
 
                 info!("Starting: {}", desc);
 
-                if let Err(e) = step.run(&pb).await {
-                    pb.finish_with_message(
-                        style(format!(
-                            "[{}/{}] ❌ Failed: {}",
-                            step_num, total_steps, desc
-                        ))
-                        .red()
-                        .bold()
-                        .to_string(),
-                    );
-                    error!("Failed: {}: {:?}", desc, e);
-                    self.stats.failed_steps += 1;
-                    continue;
+                match step.run(&pb).await {
+                    Ok(step_result) => {
+                        pb.finish_with_message(
+                            style(format!("[{}/{}] ✅ {}", step_num, total_steps, desc))
+                                .green()
+                                .bold()
+                                .to_string(),
+                        );
+                        info!("Finished: {}", desc);
+                        self.stats.completed_steps += 1;
+                        self.updated_apps.extend(step_result.updated_apps);
+                        sleep(Duration::from_millis(150)).await;
+                    }
+                    Err(e) => {
+                        pb.finish_with_message(
+                            style(format!(
+                                "[{}/{}] ❌ Failed: {}",
+                                step_num, total_steps, desc
+                            ))
+                            .red()
+                            .bold()
+                            .to_string(),
+                        );
+                        error!("Failed: {}: {:?}", desc, e);
+                        self.stats.failed_steps += 1;
+                        continue;
+                    }
                 }
-
-                pb.finish_with_message(
-                    style(format!("[{}/{}] ✅ {}", step_num, total_steps, desc))
-                        .green()
-                        .bold()
-                        .to_string(),
-                );
-                info!("Finished: {}", desc);
-                self.stats.completed_steps += 1;
-                sleep(Duration::from_millis(150)).await;
-            }
-
-            if self.quiet {
-                if let Err(_e) = step.run(&ProgressBar::hidden()).await {
-                    print!(" ❌");
-                    self.stats.failed_steps += 1;
-                } else {
-                    print!(" ✅");
-                    self.stats.completed_steps += 1;
-                }
-                io::stdout().flush().ok();
             }
         }
 
-        if self.quiet {}
 
         info!("Update completed: {:?}", self.stats);
 
@@ -194,6 +201,29 @@ impl Updater {
             seconds
         );
 
+        // Display updated apps summary
+        if !self.updated_apps.is_empty() {
+            println!("\n{}", style("📦 Updated Apps Summary").cyan().bold());
+            let mut by_package_manager: std::collections::HashMap<String, Vec<&UpdatedApp>> = std::collections::HashMap::new();
+            
+            for app in &self.updated_apps {
+                by_package_manager.entry(app.package_manager.clone()).or_default().push(app);
+            }
+            
+            for (pm, apps) in by_package_manager {
+                println!("   {} {}:", style("📦").green(), style(&pm).bold());
+                for app in apps {
+                    if let (Some(old), Some(new)) = (&app.old_version, &app.new_version) {
+                        println!("     • {} ({} → {})", app.name, old, new);
+                    } else {
+                        println!("     • {}", app.name);
+                    }
+                }
+            }
+        } else {
+            println!("\n{}", style("📦 No app updates were detected").yellow());
+        }
+
         Ok(())
     }
 }
@@ -210,7 +240,7 @@ struct Args {
     #[arg(short = 'q', long = "quiet")]
     quiet: bool,
 }
-pub async fn run_command_with_output(cmd: String, pb: ProgressBar) -> anyhow::Result<()> {
+pub async fn run_command_with_output(cmd: String, pb: ProgressBar) -> anyhow::Result<String> {
     // Use shell to execute complex commands with pipes, redirections, etc.
     let output = tokio::process::Command::new("sh")
         .arg("-c")
@@ -262,7 +292,7 @@ pub async fn run_command_with_output(cmd: String, pb: ProgressBar) -> anyhow::Re
             .to_string(),
     );
     info!("Command `{}` completed successfully", cmd);
-    Ok(())
+    Ok(stdout.to_string())
 }
 
 #[tokio::main]
@@ -287,7 +317,7 @@ async fn main() -> Result<()> {
 
     let run_command = |cmd: String, pb: ProgressBar| {
         Box::pin(run_command_with_output(cmd, pb))
-            as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send>>
+            as std::pin::Pin<Box<dyn std::future::Future<Output = anyhow::Result<String>> + Send>>
     };
     let update_steps: Vec<Box<dyn UpdaterStep + Send + Sync>> = vec![
         Box::new(CommandStep::new(
